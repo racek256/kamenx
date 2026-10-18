@@ -1,4 +1,5 @@
 use duckdb::{Connection, params};
+use indicatif::{ProgressBar, ProgressStyle};
 
 use flate2::bufread::MultiGzDecoder;
 use std::collections::HashSet;
@@ -47,19 +48,21 @@ pub fn start_wet_crawl(){
 
 
         let (p_rx, r_rx, w_rx) = (rx.clone(), file_rx.clone(), parsed_rx.clone());
+        let pb = ProgressBar::new(0);
+       pb.set_style(ProgressStyle::default_spinner()          // returns ProgressStyle directly — no unwrap
+            .template("{spinner} {msg}")          // returns Result — unwrap here
+            .unwrap()
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"));
+
 
         thread::spawn(move || loop {
-        thread::sleep(std::time::Duration::from_secs(1));
-         eprintln!(
-            "queues  pages {}/{}  raw {}/{}  parsed {}/{}",
-            p_rx.len(), p_rx.capacity().unwrap(),
-            r_rx.len(), r_rx.capacity().unwrap(),
-            w_rx.len(), w_rx.capacity().unwrap(),
-        );
+            thread::sleep(std::time::Duration::from_millis(100));
+            
+            pb.set_message(format!("pages added to dataset: {}", stats_value.lock().unwrap()));
+            pb.tick()
 
-        println!("pages in index: {}", stats_value.lock().unwrap());
 
-    }); 
+        }); 
         
 
         let _consumers: Vec<_> = (0..2)
@@ -114,7 +117,7 @@ fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::
     thread::spawn(move||{
         for item in rx{
             let filename = &format!("./crawl/{}",item);
-            println!("{}",filename);
+            //println!("{}",filename);
             //remove_file(filename).unwrap();
             // Parse the file
             let file = File::open(filename).unwrap();

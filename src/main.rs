@@ -1,11 +1,8 @@
 use clap::{Parser, Subcommand};
-mod index;
 mod wet_crawl;
 mod crawl;
 mod search;
-use crate::index::{download_index, prepare_db};
 use crate::search::open_search;
-use crate::crawl::{start_crawl};
 use crate::wet_crawl::{start_wet_crawl};
 
 #[derive(Parser)]
