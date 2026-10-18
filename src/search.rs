@@ -56,7 +56,7 @@ fn ensure_index_blocking() -> Result<(), String> {
     }
     println!("Building FTS index over {rows} rows (overwrite=true), this can take a while...");
     conn.execute_batch(
-        "SET memory_limit='24GB'; PRAGMA create_fts_index('wet', 'url', 'text', overwrite=true);",
+        "SET memory_limit='24GB'; PRAGMA create_fts_index('wet', 'url', 'text', 'url', overwrite=true);"
     )
     .map_err(|e| e.to_string())?;
     store_indexed_count(rows);

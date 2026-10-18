@@ -5,7 +5,8 @@ import viteLogo from './assets/vite.svg'
 import search from './assets/search.svg'
 import './App.css'
 
-const backend = "http://localhost:3000"
+
+const backend = import.meta.env.VITE_BACKEND_URL
 function App() {
 	const [results, setResults] = useState([])
 	const [query, setQuery] = useState("")

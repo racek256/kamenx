@@ -49,7 +49,7 @@ pub fn start_wet_crawl(){
 
         let (p_rx, r_rx, w_rx) = (rx.clone(), file_rx.clone(), parsed_rx.clone());
         let pb = ProgressBar::new(0);
-       pb.set_style(ProgressStyle::default_spinner()          // returns ProgressStyle directly — no unwrap
+       pb.set_style(ProgressStyle::default_spinner()          
             .template("{spinner} {msg}")          // returns Result — unwrap here
             .unwrap()
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"));
@@ -117,15 +117,13 @@ fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::
     thread::spawn(move||{
         for item in rx{
             let filename = &format!("./crawl/{}",item);
-            //println!("{}",filename);
-            //remove_file(filename).unwrap();
-            // Parse the file
+
             let file = File::open(filename).unwrap();
 
             let reader: Box<dyn BufRead> = Box::new(BufReader::new(MultiGzDecoder::new(BufReader::new(file))));
             let parsed = parse_wet(reader).into_iter();
 
-            let filtered:Vec<WetRecord> = parsed.filter(|e| e.lang=="eng" && !e.text.contains("Redirect Notice")).collect(); // Cheap ass langauge filter 
+            let filtered = filter_data(parsed);
             tx.send((item, filtered)).unwrap();
             remove_file(filename).unwrap();
             
@@ -133,6 +131,27 @@ fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::
         }
     })
 }
+
+
+
+fn filter_data<I: IntoIterator<Item = WetRecord>>(data: I) -> Vec<WetRecord> {
+    data.into_iter()
+        .filter(|e| e.lang == "eng" && !e.text.contains("Redirect Notice"))
+        .collect()
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 fn writer_consumer(rx: crossbeam_channel::Receiver<(String, Vec<WetRecord>)>, conn: duckdb::Connection, value: Arc<Mutex<i32>>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
