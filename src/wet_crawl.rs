@@ -1,11 +1,10 @@
 use duckdb::{Connection, params};
 
-use flate2::bufread::GzDecoder;
-use indicatif::ProgressBar;
 use flate2::bufread::MultiGzDecoder;
-use std::io::{BufReader, Write, BufRead};
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Write};
 
-use std::fs::{File, remove_file};
+use std::fs::{File, OpenOptions, remove_file};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use crossbeam_channel::bounded;
@@ -17,14 +16,31 @@ pub fn start_wet_crawl(){
         let crawl:&str = "CC-MAIN-2026-39";
         let table_url:String = format!("https://data.commoncrawl.org/crawl-data/{}/wet.paths.gz", crawl);
 
+        std::fs::create_dir_all("./crawl").unwrap();
+
         println!("downloading index table");
         let _ = download(&table_url,"./crawl/table.gz");
         let _ = gunzip("./crawl/table.gz","./crawl/table.txt");
-        let index_list = loadTable("./index/table.txt").unwrap();
-        let download_urls:Vec<String> = index_list.into_iter().map(|e| format!("https://data.commoncrawl.org/{}",e)).collect();
+        let index_list = load_table("./crawl/table.txt").unwrap();
+        let done: HashSet<String> = match File::open("./crawl/done.log") {
+                Ok(f) => BufReader::new(f).lines().map(|l| l.unwrap().trim().to_string()).filter(|l| !l.is_empty()).collect(),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => HashSet::new(),
+                Err(e) => panic!("failed to read ./crawl/done.log: {e}"),
+        };
+        let mut skipped = 0usize;
+        let download_urls: Vec<String> = index_list.into_iter().filter(|e| {
+                let fname = e.split('/').next_back().unwrap_or(e.as_str());
+                if done.contains(fname) {
+                        skipped += 1;
+                        false
+                } else {
+                        true
+                }
+        }).map(|e| format!("https://data.commoncrawl.org/{}",e)).collect();
+        eprintln!("resume: skipped {skipped} already-done segments ({} remaining)", download_urls.len());
         let (tx, rx) = bounded::<String>(64); 
         let (file_tx, file_rx) = bounded::<String>(64);
-        let (parsed_tx, parsed_rx) = bounded::<Vec<WetRecord>>(64);
+        let (parsed_tx, parsed_rx) = bounded::<(String, Vec<WetRecord>)>(64);
 
         let value = Arc::new(Mutex::new(0i32));
         let stats_value = Arc::clone(&value);
@@ -46,20 +62,20 @@ pub fn start_wet_crawl(){
     }); 
         
 
-        let consumers: Vec<_> = (0..1)
+        let _consumers: Vec<_> = (0..2)
         .map(|_|{
             let page_rx = rx.clone();
             let raw_tx = file_tx.clone();
             download_consumer(page_rx, raw_tx)
 
         }).collect(); 
-        let parse_consumer: Vec<_> = (0..6)
+        let _parse_consumer: Vec<_> = (0..6)
         .map(|_|{
             let parsed_tx = parsed_tx.clone();
             let file_rx = file_rx.clone();
             parser_consumer(file_rx, parsed_tx)
         }).collect();
-        let write_consumer: Vec<_> = (0..1)
+        let _write_consumer: Vec<_> = (0..1)
          .map(|_|{
             let conn = Connection::open("./crawl/crawl.db").unwrap();
             let parsed_rx = parsed_rx.clone();
@@ -94,8 +110,7 @@ fn download_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel
 
 
 
-
-fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::Sender<Vec<WetRecord>>)->thread::JoinHandle<()>{
+fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::Sender<(String, Vec<WetRecord>)>)->thread::JoinHandle<()>{
     thread::spawn(move||{
         for item in rx{
             let filename = &format!("./crawl/{}",item);
@@ -108,32 +123,38 @@ fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::
             let parsed = parse_wet(reader).into_iter();
 
             let filtered:Vec<WetRecord> = parsed.filter(|e| e.lang=="eng" && !e.text.contains("Redirect Notice")).collect(); // Cheap ass langauge filter 
-            tx.send(filtered).unwrap();
+            tx.send((item, filtered)).unwrap();
             remove_file(filename).unwrap();
+            
             
         }
     })
 }
 
-fn writer_consumer(rx: crossbeam_channel::Receiver<Vec<WetRecord>>, conn: duckdb::Connection, value: Arc<Mutex<i32>>) -> thread::JoinHandle<()> {
+fn writer_consumer(rx: crossbeam_channel::Receiver<(String, Vec<WetRecord>)>, conn: duckdb::Connection, value: Arc<Mutex<i32>>) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS wet (url VARCHAR, lang VARCHAR, text VARCHAR);"
+            r"CREATE TABLE IF NOT EXISTS wet (url VARCHAR, lang VARCHAR, text VARCHAR);"
         ).unwrap();
 
-        for batch in rx {
+        for (filename, batch) in rx {
             let mut app = conn.appender("wet").unwrap();
             for r in &batch {
                 app.append_row(params![r.url, r.lang, r.text]).unwrap();
             }
             app.flush().unwrap();
-            // app dropped here -> commits
+            drop(app);
+            // Commit happened via flush + drop; only now mark done.
+            {
+                let mut log = OpenOptions::new().append(true).create(true).open("./crawl/done.log").unwrap();
+                log.write_all(format!("{filename}\n").as_bytes()).unwrap();
+                log.sync_all().unwrap();
+            }
 
             *value.lock().unwrap() += batch.len() as i32;
         }
     })
 }
-
 
 
 
@@ -166,7 +187,7 @@ fn parse_wet(mut r: Box<dyn BufRead>) -> Vec<WetRecord> {
         let mut trailer = [0u8; 4];
         let _ = r.read(&mut trailer);
         if typ == "conversion" {
-            out.push(WetRecord { url, lang, text: String::from_utf8_lossy(&body).into_owned() });
+            out.push(WetRecord { url, lang, text: (String::from_utf8_lossy(&body).into_owned()).chars().take(500).collect() });
         }
     }
 }
@@ -194,8 +215,7 @@ fn download(url: &str, dest: &str) -> Result<(), Box<dyn std::error::Error>>{
 
 
 
-
-fn loadTable(path:&str)->Result<Vec<String>,std::io::Error>{
+fn load_table(path:&str)->Result<Vec<String>,std::io::Error>{
     let file = File::open(path)?;
     let reader = BufReader::new(file);
 
