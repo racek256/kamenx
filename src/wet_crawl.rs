@@ -133,15 +133,34 @@ fn parser_consumer(rx:crossbeam_channel::Receiver<String>,tx:crossbeam_channel::
 }
 
 
+use wordnet_lemmatizer::{Lemmatizer, Pos};
+static WNL: std::sync::LazyLock<Lemmatizer> =
+  std::sync::LazyLock::new(Lemmatizer::embedded);
+
+fn lemma(tok: &str) -> String {
+  // lowercase before lookup, else "Dogs" misses
+  let lower = tok.to_ascii_lowercase();
+  WNL.lemmatize(&lower, Pos::Noun)
+}
+
+fn lemmatized_text(text: &str) -> String {
+  text.split(|c: char| !c.is_ascii_alphabetic())
+    .filter(|t| t.len() >= 2 && t.len() <= 30)
+    .map(lemma)
+    .collect::<Vec<_>>()
+    .join(" ")
+}
 
 fn filter_data<I: IntoIterator<Item = WetRecord>>(data: I) -> Vec<WetRecord> {
     data.into_iter()
         .filter(|e| e.lang == "eng" && !e.text.contains("Redirect Notice"))
+        .map(|mut e| {
+          e.text = lemmatized_text(&e.text);
+          e
+        })
+        .filter(|e| !e.text.is_empty())
         .collect()
 }
-
-
-
 
 
 

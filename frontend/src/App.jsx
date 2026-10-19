@@ -1,7 +1,4 @@
 import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
 import search from './assets/search.svg'
 import './App.css'
 
@@ -25,7 +22,7 @@ function App() {
   return (
   <div className='flex flex-col items-center w-screen bg-slate-900'>
 	<div className='h-screen w-full  xl:w-1/2 bg-slate-950 flex-col flex px-8 '>
-		<div className=' w-full bg-gray-200 rounded-xl m-2 overflow-hidden flex items-center text-black'>
+		<div className=' w-full bg-gray-200 rounded-xl m-2  shrink-0 overflow-hidden flex items-center text-black'>
 			<img src={search} className='w-6 h-6 shrink-0 mx-2' alt='search' />
 			<input className=' p-2  w-full  ' placeholder="search on kamenx" onChange={e=>{
 			setQuery(e.target.value)
