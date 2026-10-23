@@ -10,6 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use crossbeam_channel::bounded;
 
+const STOPWORDS: &str = include_str!("stopwords.txt");
+
+
+
 pub struct WetRecord { pub url: String, pub lang: String, pub text: String }
 
 
@@ -57,11 +61,17 @@ pub fn start_wet_crawl(){
 
         thread::spawn(move || loop {
             thread::sleep(std::time::Duration::from_millis(100));
-            
-            pb.set_message(format!("pages added to dataset: {}", stats_value.lock().unwrap()));
-            pb.tick()
-
-
+            pb.set_message(format!(
+                "queues pages {}/{} raw {}/{} parsed {}/{} | pages added to dataset: {}",
+                p_rx.len(),
+                p_rx.capacity().unwrap(),
+                r_rx.len(),
+                r_rx.capacity().unwrap(),
+                w_rx.len(),
+                w_rx.capacity().unwrap(),
+                stats_value.lock().unwrap(),
+            ));
+            pb.tick();
         }); 
         
 
@@ -72,7 +82,7 @@ pub fn start_wet_crawl(){
             download_consumer(page_rx, raw_tx)
 
         }).collect(); 
-        let _parse_consumer: Vec<_> = (0..6)
+        let _parse_consumer: Vec<_> = (0..12)
         .map(|_|{
             let parsed_tx = parsed_tx.clone();
             let file_rx = file_rx.clone();
@@ -151,19 +161,36 @@ fn lemmatized_text(text: &str) -> String {
     .join(" ")
 }
 
+use lede::{summarize, clean_text};
 fn filter_data<I: IntoIterator<Item = WetRecord>>(data: I) -> Vec<WetRecord> {
+    let stopwords=load_stopwords();
     data.into_iter()
         .filter(|e| e.lang == "eng" && !e.text.contains("Redirect Notice"))
+        .map(|mut e|{
+            e.text = clean_text(&e.text);
+            let summary = summarize(&e.text, 500, lede::Mode::Default);
+            e.text = summary.summary;
+            e
+        })
+        .map(|mut e|{
+            let text = e.text.split_whitespace()
+                .filter(|word| !stopwords.contains(word))
+                .collect();
+            e.text = text;
+            e
+        })
         .map(|mut e| {
           e.text = lemmatized_text(&e.text);
           e
         })
+
         .filter(|e| !e.text.is_empty())
         .collect()
 }
 
-
-
+fn load_stopwords() -> std::collections::HashSet<&'static str> {
+    STOPWORDS.split_whitespace().collect()
+}
 
 
 
@@ -228,7 +255,7 @@ fn parse_wet(mut r: Box<dyn BufRead>) -> Vec<WetRecord> {
         let mut trailer = [0u8; 4];
         let _ = r.read(&mut trailer);
         if typ == "conversion" {
-            out.push(WetRecord { url, lang, text: (String::from_utf8_lossy(&body).into_owned()).chars().take(500).collect() });
+            out.push(WetRecord { url, lang, text: (String::from_utf8_lossy(&body).into_owned()).chars().collect() });
         }
     }
 }

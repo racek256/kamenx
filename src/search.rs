@@ -18,6 +18,82 @@ struct SearchResult {
     score: f64,
 }
 
+
+
+
+
+
+
+// Main search algorithm
+fn search_on_conn(conn: &Connection, q: String, limit: i64) -> Result<Vec<SearchResult>, String> {
+    let lit = q.replace('\'', "''");
+
+    /*
+    * somehow select most relevant part of text
+    * lobomotize (lematize)
+    * remove stop words
+    *
+    * BM25 search content 1x
+    * BM25 search url 2x
+    * maybe embedding?
+    * lot of caffeine
+    * 
+    * */
+    let sql = format!(
+        //"SELECT * FROM (SELECT url, substr(text, 1, 500) AS snippet, fts_main_wet.match_bm25(url, '{lit}') AS score FROM wet) WHERE score IS NOT NULL ORDER BY score DESC LIMIT {limit}"
+        /*"SELECT * FROM (
+          SELECT
+            url,
+            substr(text, 1, 500) AS snippet,
+            fts_main_wet.match_bm25(url, '{lit}', fields := 'url')  AS url_score,
+            fts_main_wet.match_bm25(url, '{lit}')                   AS text_score
+          FROM wet
+          WHERE fts_main_wet.match_bm25(url, '{lit}') IS NOT NULL
+        )
+        ORDER BY
+          (CASE WHEN url_score IS NOT NULL THEN 1 ELSE 0 END) DESC,          -- url matches first
+          (COALESCE(url_score, 0) * 2.0 + COALESCE(text_score, 0)) DESC      -- url weighted 2x
+        LIMIT {limit}
+        "*/
+    "SELECT * FROM (
+  SELECT
+    url,
+    substr(text, 1, 500) AS snippet,
+    fts_main_wet.match_bm25(url, '{lit}', fields := 'url')  AS url_score,
+    fts_main_wet.match_bm25(url, '{lit}')                   AS text_score,
+    -- count '/chunk' occurrences: total chars removed ÷ length of one match
+    (length(url) - length(replace(url, '/chunk', ''))) / length('/chunk') AS chunk_count
+  FROM wet
+  WHERE fts_main_wet.match_bm25(url, '{lit}') IS NOT NULL
+)
+ORDER BY
+  (CASE WHEN url_score IS NOT NULL THEN 1 ELSE 0 END) DESC,
+  -- same score, but every extra '/chunk' divides it down
+  (COALESCE(url_score, 0) * 2.0 + COALESCE(text_score, 0)) / (1 + chunk_count) DESC
+LIMIT {limit}"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            let url: String = row.get(0)?;
+            let snippet: String = row.get(1)?;
+            let score: f64 = row.get(2)?;
+            Ok(SearchResult { url, snippet, score })
+        })
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| e.to_string())?);
+    }
+    Ok(out)
+}
+
+
+
+
+
+
+
 fn fts_present(conn: &Connection) -> bool {
     let n: i64 = conn
         .query_row(
@@ -64,26 +140,7 @@ fn ensure_index_blocking() -> Result<(), String> {
     Ok(())
 }
 
-fn search_on_conn(conn: &Connection, q: String, limit: i64) -> Result<Vec<SearchResult>, String> {
-    let lit = q.replace('\'', "''");
-    let sql = format!(
-        "SELECT * FROM (SELECT url, substr(text, 1, 500) AS snippet, fts_main_wet.match_bm25(url, '{lit}') AS score FROM wet) WHERE score IS NOT NULL ORDER BY score DESC LIMIT {limit}"
-    );
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let rows = stmt
-        .query_map([], |row| {
-            let url: String = row.get(0)?;
-            let snippet: String = row.get(1)?;
-            let score: f64 = row.get(2)?;
-            Ok(SearchResult { url, snippet, score })
-        })
-        .map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r.map_err(|e| e.to_string())?);
-    }
-    Ok(out)
-}
+
 
 async fn search_handler(
     State(conn): State<SharedConn>,

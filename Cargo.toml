@@ -17,3 +17,4 @@ tower-http = { version = "0.6", features = ["cors"] }
 tokio = {version="1.53.3", features=["rt-multi-thread", "macros", "net"]}
 serde_json = "1.0"
 wordnet-lemmatizer = { version = "0.1", default-features = false }
+lede = "0.5.1"

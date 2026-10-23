@@ -1324,6 +1324,7 @@ dependencies = [
  "duckdb",
  "flate2",
  "indicatif",
+ "lede",
  "reqwest",
  "rs-trafilatura",
  "serde",
@@ -1331,6 +1332,15 @@ dependencies = [
  "tokio",
  "tower-http",
  "wordnet-lemmatizer",
+]
+
+[[package]]
+name = "lede"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "126c6bb1c4f9929c6fa0b32521e5e3e99f54a31b5634e0500818786f10dfd966"
+dependencies = [
+ "regex",
 ]
 
 [[package]]
